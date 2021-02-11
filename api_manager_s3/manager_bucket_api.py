@@ -3,7 +3,7 @@ from botocore import exceptions
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from api_manager_s3.serializers import ImagesSerializer, ImagePostSerializer
+from api_manager_s3.serializers import ImagesSerializer, ImagePostSerializer, TagSerializer
 import boto3
 from django.conf import settings
 
@@ -22,10 +22,10 @@ class ManageBucketAPI:
     def upload_images(request):
         if request.method == 'POST':
             data = request.data
-
             serializer = ImagePostSerializer(data=data)
             if serializer.is_valid():
                 file = data['file']
+                tags = data.get('tags', "")
                 original_name = file.name
                 content_type = file.content_type
                 extension = str(content_type).split('/')[1]
@@ -35,11 +35,12 @@ class ManageBucketAPI:
                         s3 = boto3.resource('s3')
                         file = 'tmp/' + uploaded_name
                         bucket_name = settings.BUCKET_NAME
-                        s3.meta.client.upload_file(file, bucket_name, uploaded_name,
+                        key_object = 'images/' + uploaded_name
+                        s3.meta.client.upload_file(file, bucket_name, key_object,
                                                    ExtraArgs={'ACL': 'public-read',
                                                               'ContentType': content_type})
                         location = boto3.client('s3').get_bucket_location(Bucket=bucket_name)['LocationConstraint']
-                        url = "https://%s.s3.%s.amazonaws.com/%s" % (bucket_name, location, uploaded_name)
+                        url = "https://%s.s3.%s.amazonaws.com/%s" % (bucket_name, location, key_object)
                         data = {
                             'name': original_name,
                             'full_path': url,
@@ -49,7 +50,7 @@ class ManageBucketAPI:
                         if serializer_image.is_valid():
                             try:
                                 save_image = Images().save_image(name=original_name, full_path=url,
-                                                                 hash_name=uploaded_name)
+                                                                 hash_name=key_object, tags=tags)
                                 logger.warning(save_image.__dict__)
                                 response = CustomResponse.response(
                                     data={
@@ -103,6 +104,38 @@ class ManageBucketAPI:
             bucket_name = settings.BUCKET_NAME
             my_bucket = s3.Bucket(bucket_name)
             location = boto3.client('s3').get_bucket_location(Bucket=bucket_name)['LocationConstraint']
+            list_objects = []
             for file in my_bucket.objects.all():
                 url = "https://%s.s3.%s.amazonaws.com/%s" % (bucket_name, location, file.key)
-        return Response()
+                list_objects.append(url)
+
+        response = CustomResponse.response(
+            data={
+                "list_objects": list_objects
+            },
+            message="Proceso completado con éxito")
+        return Response(response, status=status.HTTP_200_OK)
+
+    @staticmethod
+    @api_view(['POST'])
+    def list_by_tags(request):
+        if request.method == 'POST':
+            data = request.data
+            serializer = TagSerializer(data=data)
+            if serializer.is_valid():
+                list_images = Images().list_images_by_tags(data['tag'])
+                list_objects = []
+                for i in list_images:
+                    list_objects.append(str(i))
+
+                response = CustomResponse.response(data={"list_objects": list_objects},
+                                                   message="Proceso completado con éxito")
+                return Response(response, status=status.HTTP_200_OK)
+
+            else:
+                logger.error('invalid tag')
+                logger.error(serializer.errors)
+                response = CustomResponse.response(status='error',
+                                                   data=400,
+                                                   message="Bad Request")
+                return Response(response, status=status.HTTP_400_BAD_REQUEST)

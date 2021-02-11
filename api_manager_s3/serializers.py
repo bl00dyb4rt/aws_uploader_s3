@@ -15,3 +15,7 @@ class ImagesSerializer(serializers.Serializer):
 
 class ImagePostSerializer(serializers.Serializer):
     file = serializers.ImageField(max_length=None, allow_empty_file=False)
+    tags = serializers.CharField(max_length=200, allow_blank=True, required=False)
+
+class TagSerializer(serializers.Serializer):
+    tag = serializers.CharField(max_length=200, allow_blank=False, required=True)
